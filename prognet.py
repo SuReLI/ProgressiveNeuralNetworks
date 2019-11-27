@@ -1,6 +1,8 @@
 import torch.nn as nn
 import torch.nn.functional as F
-
+from functools import reduce
+from operator import mul
+from collections import Iterable
 
 class LateralBlock(nn.Module):
     def __init__(self,col,depth,block,out_shape, in_shapes):
@@ -12,16 +14,19 @@ class LateralBlock(nn.Module):
         self.u = nn.ModuleList()
         
         
-        if self.depth > 0: 
-            self.u.extend([nn.Linear(in_shape,self.out_shape) for in_shape in in_shapes])
+        if self.depth > 0:
+            red_in_shapes = [reduce(mul,in_shape) if isinstance(in_shape,Iterable) else in_shape for in_shape in in_shapes]
+            red_out_shape = reduce(mul,out_shape) if isinstance(out_shape,Iterable) else out_shape
+            self.u.extend([nn.Linear(in_shape,red_out_shape) for in_shape in red_in_shapes])
 
 
     def forward(self,inputs,activated = True):
         if not isinstance(inputs, list):
             inputs = [inputs]
-
+        
         cur_column_out = self.block(inputs[-1])
-        prev_columns_out = [mod(x) for mod, x in zip(self.u, inputs)] 
+        out_shape = tuple(j for i in (-1, self.out_shape) for j in (i if isinstance(i, tuple) else (i,)))
+        prev_columns_out = [mod(x.view(x.shape[0],-1)).view(out_shape) for mod, x in zip(self.u, inputs)] 
         res= cur_column_out + sum(prev_columns_out)
         if activated: 
             res = F.relu(res)
@@ -39,7 +44,6 @@ class ProgNet(nn.Module):
     
     def forward(self,x,task_id=-1):
         assert self.columns
-
         inputs = [col[0](x) for col in self.columns]
         for l in range(1,self.depth):
             out = []         
